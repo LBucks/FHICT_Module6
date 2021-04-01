@@ -8,6 +8,7 @@ void LBDebug(char debugStr[], unsigned long dbgValue);
 void LBPrepareToTalk(void);
 void LBPrepareToListen(void);
 void LBStop(void);
+void LBToggleDebug(void);
 
 /*
   Private variables
@@ -142,7 +143,20 @@ void LBStop(void) {
   lbReady = false;
 }
 
+// Debug function to toggle output pin 7 whenever I want to see if code is being executed.
+void LBToggleDebug(void) {
+  const byte pin7Msk = 0b10000000;
+  if ((PORTD & pin7Msk) == pin7Msk) {
+    PORTD &= (~pin7Msk);
+  }
+  else {
+    PORTD |= pin7Msk;
+  }
+}
+
+// ISR for detecting start bit
 ISR(INT1_vect, ISR_NOBLOCK) {
+  LBToggleDebug();
   if (lbReadPacketCounter == 0) {
     // This is the start bit. Enable the timer so we can poll and save the incoming bits.
     TCNT1 = 0; // Reset counter. Might not work very well, might need to adjust the OCR0A instead. But time will tell :)
@@ -158,6 +172,7 @@ ISR(INT1_vect, ISR_NOBLOCK) {
   }
 }
 
+// ISR for receiving bit by bit
 ISR(TIMER1_COMPA_vect) {
   // Counter values and what they represent:
   // 0 == waiting for startbit
@@ -198,19 +213,13 @@ ISR(TIMER1_COMPA_vect) {
   }
 }
 
+// ISR for sending bit by bit
 ISR(TIMER2_COMPA_vect, ISR_NOBLOCK) {
   OCR2A = TCNT2 + lbWriteTimerSpeed; // If not set as the first thing once the ISR is called the timing gets messed up.
   // Bit 0 = start bit
   // Bit 1..8 = data bits
   // Bit 9 = parity bit
   // Bit 10..11 stop bits
-  const byte pin7Msk = 0b10000000;
-  if ((PORTD & pin7Msk) == pin7Msk) {
-    PORTD &= (~pin7Msk);
-  }
-  else {
-    PORTD |= pin7Msk;
-  }
 
   if (lbWriteBufferRemaining == 0) {
     TIMSK2 &= (~0b11); // Disable Timer2 Compare Match A Interrupt.
