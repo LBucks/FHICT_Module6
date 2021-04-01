@@ -1,0 +1,6 @@
+{
+    "files.associations": {
+        "lenbucuart.h": "c",
+        "arduino.h": "c"
+    }
+}
