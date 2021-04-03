@@ -19,7 +19,7 @@ const byte lbTxPin = PIND4;
 const byte lbTxPinMsk = 1 << PIND4;
 const byte lbWriteBufferSize = 32; // Amount of bytes for the write buffer.
 const byte lbReadBufferSize = 32; // Amount of bytes for the read buffer.
-const boolean lbDebugging = false;
+const boolean lbDebugging = true;
 volatile u32 lbBaudRate = 9600;
 volatile bool lbReady = false;
 volatile byte lbWriteBuffer[lbWriteBufferSize]; // The write buffer.
@@ -34,6 +34,7 @@ volatile byte lbReadBufferRemaining = 0; // How many bytes are left to be read.
 volatile byte lbReadPacketCounter = 0; // The counter for the current packet being received.
 volatile byte lbReadPositiveBits = 0; // Amount of positive bits that have been received.
 volatile byte lbReadActiveCount = 0; // What index of the buffer array is currently being written to.
+uint16_t lbReadTimerSpeed = 0;
 
 void (*lbTimerFunctionP)(void); // Function pointer for the ISR TIMER2.
 
@@ -116,20 +117,23 @@ void LBPrepareToTalk(void) {
 }
 
 void LBPrepareToListen(void) {
-  LBDebug("Preparing to debug..", 0);
-  cli(); // Prevent interrupt from interfering during setup.
+  LBDebug("Preparing to listen..", 0);
+  // cli(); // Prevent interrupt from interfering during setup.
   // Setup pin interrupt for start bit.
   pinMode(lbRxPin, INPUT_PULLUP);
+  cli();
   EICRA &= (~0b1100); // Reset INT1 control register.
   EICRA |= 0b1000; // Set to interrupt on falling edge to indicate a start bit.
   EIMSK |= 0b10; // Enable interrupt for starting bit.
   // Setup timer for after the start bit.
   TIMSK1 &= (~0b11); // Disable timer 1.
-  TCCR1A = 0b00000010; // Set to CTC mode so we can use counter matching.
+  TCCR1A = 0; // Reset register.
   TCCR1B = 0; // Reset register.
-  TCCR1B |= 0b010; // Prescaler to 8.
-  OCR1A = (byte)(16000000L / (8 * lbBaudRate) / 2) - 1; // Set counter match target. (16mhz / (prescaler * baudrate) / 2).
+  TCCR1B |= (1 << CS10); // Prescaler to 0.
+  TCCR1B |= (1 << WGM12); // Set to CTC mode so we can use counter matching.
+  lbReadTimerSpeed = (byte)(16000000L / lbBaudRate / 2) - 1; // Set counter match target. (16mhz / (prescaler * baudrate) / 2).
   // The divide by 2 is so that the timer is twice as fast as required so we can 'Read' between the bits.
+  OCR1A = TCNT1 + lbReadTimerSpeed;
   sei(); // Enable interrupts.
 }
 
@@ -155,11 +159,10 @@ void LBToggleDebug(void) {
 }
 
 // ISR for detecting start bit
-ISR(INT1_vect, ISR_NOBLOCK) {
-  LBToggleDebug();
+ISR(INT1_vect) {
+    LBToggleDebug();
   if (lbReadPacketCounter == 0) {
     // This is the start bit. Enable the timer so we can poll and save the incoming bits.
-    TCNT1 = 0; // Reset counter. Might not work very well, might need to adjust the OCR0A instead. But time will tell :)
     byte availableBufferPos = lbReadBufferPos + lbReadBufferRemaining;
     if (availableBufferPos == lbReadBufferSize - 1) {
       availableBufferPos -= lbReadBufferSize - 1;
@@ -167,13 +170,16 @@ ISR(INT1_vect, ISR_NOBLOCK) {
     lbReadActiveCount = availableBufferPos;
     lbReadBuffer[lbReadActiveCount] = 0;
     lbReadPacketCounter++;
+    cli();
     TIMSK1 |= 0b10; // Enable timer 1 interrupt.
     EIMSK &= (~0b10); // Disable interrupt on the rx pin to prevent unnecessary interrupt during data transmission.
+    sei();
   }
 }
 
 // ISR for receiving bit by bit
 ISR(TIMER1_COMPA_vect) {
+  OCR1A = TCNT1 + lbReadTimerSpeed; // If not set as the first thing once the ISR is called the timing gets messed up.
   // Counter values and what they represent:
   // 0 == waiting for startbit
   // 1 == between startbit and first data bit
@@ -192,12 +198,15 @@ ISR(TIMER1_COMPA_vect) {
   if (lbReadPacketCounter < 3) {
     // ignore first few counts due to the start bit.
   }
-  else if (lbReadPacketCounter == 19) {
+  else if (lbReadPacketCounter >= 19) {
     // Calc parity bit and handle errors.
 
     // Disable timer and reset to wait for the next interrupt on the rx pin.
+    lbReadPacketCounter = 0;
+    cli();
     TIMSK1 &= (~0b10); // Disable timer 0 interrupt.
     EIMSK |= 0b10; // Enable interrupt for starting bit.
+    sei();
   }
   else {
     byte dataBitOffsetHelper = lbReadPacketCounter - 1;
@@ -207,10 +216,14 @@ ISR(TIMER1_COMPA_vect) {
     // Count 8 is now bit 4.
     // Count 10 is now bit 5.
     // Every uneven count should be ignored.
-    if (dataBitOffsetHelper % 2 == 0) {
-      lbReadBuffer[lbReadActiveCount] |= ((PORTD & lbRxPinMsk == lbRxPinMsk) << (dataBitOffsetHelper / 2));
+    if (dataBitOffsetHelper % 2 == 0 && false) {
+      if ((PORTD & lbRxPinMsk) == lbRxPinMsk) {
+        // Pin is high.
+        lbReadBuffer[lbReadActiveCount] |= (1 << (dataBitOffsetHelper / 2));
+      }
     }
   }
+  lbReadPacketCounter++;
 }
 
 // ISR for sending bit by bit
@@ -222,7 +235,6 @@ ISR(TIMER2_COMPA_vect, ISR_NOBLOCK) {
   // Bit 10..11 stop bits
 
   if (lbWriteBufferRemaining == 0) {
-    TIMSK2 &= (~0b11); // Disable Timer2 Compare Match A Interrupt.
     return;
   }
   if (lbWriteNextBit == 0) {

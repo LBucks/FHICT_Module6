@@ -18,9 +18,9 @@ void setup() {
   InitPins();
 }
 void loop() {
-    LBWrite(53);
+    // LBWrite(53);
     // LBWrite(60);
-    delay(10);
+    delay(50);
     return;
   if (Serial.available() > 0) {
     switch ((char)Serial.read())
