@@ -23,7 +23,7 @@ void loop() {
     }
     // LBWrite(53);
     // LBWrite(60);
-    delay(50);
+    delay(100);
     return;
   if (Serial.available() > 0) {
     switch ((char)Serial.read())

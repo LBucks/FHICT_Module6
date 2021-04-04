@@ -9,6 +9,7 @@ void LBPrepareToTalk(void);
 void LBPrepareToListen(void);
 void LBStop(void);
 void LBToggleDebug(void);
+void LBNextReadBufferPos(void);
 
 /*
   Private variables
@@ -29,7 +30,7 @@ volatile byte lbWriteNextBit = 0; // What bit is to send next.
 volatile byte lbWritePositiveBits = 0; // Amount of positive bit that have been sent during the current package.
 byte lbWriteTimerSpeed = 0;
 volatile byte lbReadBuffer[lbReadBufferSize]; // The read buffer.
-volatile byte lbReadBufferPos = 0; // The current position of the read buffer.
+volatile byte lbReadBufferPos = 0; // The current position of the read buffer for the reading function. If lbReadBufferRemaining > 0 this position contains the first entry.
 volatile byte lbReadBufferRemaining = 0; // How many bytes are left to be read.
 volatile byte lbReadPacketCounter = 0; // The counter for the current packet being received.
 volatile byte lbReadPositiveBits = 0; // Amount of positive bits that have been received.
@@ -86,15 +87,10 @@ boolean LBAvailable(void) {
 byte LBRead(void) {
   cli();
   byte data = lbReadBuffer[lbReadBufferPos];
-  if (lbReadBufferPos == (lbReadBufferSize - 1)) {
-    lbReadBufferPos = 0;
-  }
-  else {
-    lbReadBufferPos++;
-  }
+  // LBDebug("P", lbReadBufferPos);
+  LBNextReadBufferPos();
   lbReadBufferRemaining--;
   sei();
-  LBDebug("P", lbReadBufferRemaining);
 
   return data;
 }
@@ -128,7 +124,6 @@ void LBPrepareToListen(void) {
   // cli(); // Prevent interrupt from interfering during setup.
   // Setup pin interrupt for start bit.
   pinMode(lbRxPin, INPUT_PULLUP);
-  DDRD &= (~lbRxPinMsk); // Set the rx pin as input
   EICRA &= (~0b1100); // Reset INT1 control register.
   EICRA |= 0b1000; // Set to interrupt on falling edge to indicate a start bit.
   EIMSK |= 0b10; // Enable interrupt for starting bit.
@@ -165,6 +160,17 @@ void LBToggleDebug(void) {
   }
 }
 
+void LBNextReadBufferPos() {
+  if (lbReadBufferPos == (lbReadBufferSize - 1)) {
+    // Wrap around and go to 0 again.
+    lbReadBufferPos = 0;
+  }
+  else {
+    // Just increase the current position by one.
+    lbReadBufferPos++;
+  }
+}
+
 // ISR for detecting start bit
 ISR(INT1_vect, ISR_NOBLOCK) {
   if (lbReadPacketCounter == 0) {
@@ -180,11 +186,11 @@ ISR(INT1_vect, ISR_NOBLOCK) {
     if (lbReadBufferRemaining >= lbReadBufferSize) {
       // Handle full buffer, as in remove the oldest entry.
       availableBufferPos = lbReadBufferPos;
-      lbReadBufferPos++;
+      LBNextReadBufferPos();
     }
     else {
       availableBufferPos = lbReadBufferPos + lbReadBufferRemaining;
-      if (availableBufferPos >= (lbReadBufferSize - 1)) {
+      if (availableBufferPos > (lbReadBufferSize - 1)) {
         // Lets say the pos is 30 and remaining is 5. The the availablePos is 5, but until pos 3 is filled
         availableBufferPos -= lbReadBufferSize;
       }
@@ -219,13 +225,13 @@ ISR(TIMER1_COMPA_vect, ISR_NOBLOCK) {
   }
   else if (lbReadPacketCounter >= 19) {
     // Calc parity bit and handle errors.
+    lbReadBufferRemaining++;
 
     // Disable timer and reset to wait for the next interrupt on the rx pin.
-    lbReadPacketCounter = 0;
     cli();
     TIMSK1 &= (~0b10); // Disable timer 0 interrupt.
     sei();
-    lbReadBufferRemaining++;
+    lbReadPacketCounter = 0;
     return;
   }
   else {
