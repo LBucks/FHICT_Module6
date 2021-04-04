@@ -18,6 +18,9 @@ void setup() {
   InitPins();
 }
 void loop() {
+    if (LBAvailable()) {
+      Serial.println(LBRead());
+    }
     // LBWrite(53);
     // LBWrite(60);
     delay(50);
