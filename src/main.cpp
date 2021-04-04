@@ -13,16 +13,14 @@ bool menuActive;
 char previousCommand = '\n';
 
 void setup() {
-  // Serial.begin(9600);
+  Serial.begin(9600);
   LBBegin(9600);
   InitPins();
 }
 void loop() {
     if (LBAvailable()) {
-      Serial.println(LBRead());
+      LBWrite(LBRead());
     }
-    // LBWrite(53);
-    // LBWrite(60);
     delay(100);
     return;
   if (Serial.available() > 0) {

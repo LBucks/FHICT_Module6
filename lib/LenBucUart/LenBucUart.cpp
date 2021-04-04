@@ -28,14 +28,14 @@ volatile byte lbWriteBufferPos = 0; // The current position of the write buffer.
 volatile byte lbWriteBufferRemaining = 0; // How many bytes are left to be written.
 volatile byte lbWriteNextBit = 0; // What bit is to send next.
 volatile byte lbWritePositiveBits = 0; // Amount of positive bit that have been sent during the current package.
-byte lbWriteTimerSpeed = 0;
+byte lbWriteTimerSpeed = 0; // Counter match value for OCR register.
 volatile byte lbReadBuffer[lbReadBufferSize]; // The read buffer.
 volatile byte lbReadBufferPos = 0; // The current position of the read buffer for the reading function. If lbReadBufferRemaining > 0 this position contains the first entry.
 volatile byte lbReadBufferRemaining = 0; // How many bytes are left to be read.
 volatile byte lbReadPacketCounter = 0; // The counter for the current packet being received.
 volatile byte lbReadPositiveBits = 0; // Amount of positive bits that have been received.
 volatile byte lbReadActiveCount = 0; // What index of the buffer array is currently being written to.
-uint16_t lbReadTimerSpeed = 0;
+uint16_t lbReadTimerSpeed = 0; // Counter match value for OCR register.
 
 void (*lbTimerFunctionP)(void); // Function pointer for the ISR TIMER2.
 
@@ -87,7 +87,6 @@ boolean LBAvailable(void) {
 byte LBRead(void) {
   cli();
   byte data = lbReadBuffer[lbReadBufferPos];
-  // LBDebug("P", lbReadBufferPos);
   LBNextReadBufferPos();
   lbReadBufferRemaining--;
   sei();
@@ -176,8 +175,11 @@ ISR(INT1_vect, ISR_NOBLOCK) {
   if (lbReadPacketCounter == 0) {
     // This is the start bit. Enable the timer so we can poll and save the incoming bits.
     lbReadPacketCounter = 1;
+    lbReadPositiveBits = 0;
     cli();
-    OCR1A = TCNT1 + lbReadTimerSpeed;
+    TCNT1 = 0;
+    OCR1A = lbReadTimerSpeed;
+    TIFR1 = (1 << OCF1A); // Clear flag.
     TIMSK1 |= 0b10; // Enable timer 1 interrupt.
     sei();
 
@@ -203,30 +205,40 @@ ISR(INT1_vect, ISR_NOBLOCK) {
 
 // ISR for receiving bit by bit
 ISR(TIMER1_COMPA_vect, ISR_NOBLOCK) {
-  OCR1A = TCNT1 + lbReadTimerSpeed; // If not set as the first thing once the ISR is called the timing gets messed up.
   // Counter values and what they represent:
   // 0 == waiting for startbit
-  // 1 == start bit detected
-  // 2 == between start bit and first data bit
-  // 3 == expect this bit to be around when the first data bit changes.
-  // 4 == in between data bit 0 and 1, so we save this state as the value of bit 0.
-  // 5 == expect this bit to be around when the second data bit changes.
-  // 6 == in between data bit 1 and 2, so we save this state as the value of bit 1.
-  // 8 == data bit 2.
-  // 10 == data bit 3.
-  // 12 == data bit 4.
-  // 14 == data bit 5.
-  // 16 == data bit 6.
-  // 18 == data bit 7.
-  // 20 == parity bit.
+  // 1 == between start bit and first data bit
+  // 2 == expect this bit to be around when the first data bit changes.
+  // 3 == in between data bit 0 and 1, so we save this state as the value of bit 0.
+  // 4 == expect this bit to be around when the second data bit changes.
+  // 5 == in between data bit 1 and 2, so we save this state as the value of bit 1.
+  // 7 == data bit 2.
+  // 9 == data bit 3.
+  // 11 == data bit 4.
+  // 13 == data bit 5.
+  // 15 == data bit 6.
+  // 17 == data bit 7.
+  // 19 == parity bit.
+  // 21 == stop bit 1.
   
-  if (lbReadPacketCounter <= 3) {
-    // ignore first few counts due to the start bit.
+  if (lbReadPacketCounter <= 2 || lbReadPacketCounter == 20) {
+    // ignore these counts due to the start and stop bits.
   }
-  else if (lbReadPacketCounter >= 19) {
+  else if (lbReadPacketCounter == 19) {
     // Calc parity bit and handle errors.
-    lbReadBufferRemaining++;
-
+    volatile boolean measuredParityBit = ((PIND & lbRxPinMsk) == lbRxPinMsk);
+    volatile boolean calculatedParity = ((lbReadPositiveBits % 2) == 0);
+    if (measuredParityBit == calculatedParity) {
+      // The parity bit is true whilst we already have even parity on the data bits. So a mismatch, discard the read byte.
+      LBToggleDebug(); 
+      LBToggleDebug(); 
+    }
+    else {
+      // Reported parity matches calculated parity, approve the read byte.
+      lbReadBufferRemaining++;
+    }
+  }
+  else if (lbReadPacketCounter == 21) {
     // Disable timer and reset to wait for the next interrupt on the rx pin.
     cli();
     TIMSK1 &= (~0b10); // Disable timer 0 interrupt.
@@ -235,20 +247,19 @@ ISR(TIMER1_COMPA_vect, ISR_NOBLOCK) {
     return;
   }
   else {
-    // Every uneven count should be ignored.
     if (lbReadPacketCounter % 2 == 0) {
+      // Every even count should be ignored.
+    }
+    else {
       if ((PIND & lbRxPinMsk) == lbRxPinMsk) {
-        LBToggleDebug();
         // Pin is high.
-        byte dataBitOffsetHelper = (lbReadPacketCounter / 2) - 2;
+        byte dataBitOffsetHelper = ((lbReadPacketCounter + 1) / 2) - 2;
         // Count 0 is now bit 0.
         // Count 2 is now bit 1.
         // Count 4 is now bit 2.
-        // Count 6 is now bit 3.
-        // Count 8 is now bit 4.
-        // Count 10 is now bit 5.
         // Etc...
         lbReadBuffer[lbReadActiveCount] |= (1 << dataBitOffsetHelper);
+        lbReadPositiveBits++;
       }
     }
   }
