@@ -1,5 +1,6 @@
 #include <LenBucUart.h>
 #include <Arduino.h>
+#include <string.h>
 
 /*
   Prototypes for private functions
@@ -21,7 +22,7 @@ const byte lbRxPin = PIND3; // Used because it is attached to interrupt INT1
 const byte lbRxPinMsk = 1 << PIND3;
 const byte lbTxPin = PIND4;
 const byte lbTxPinMsk = 1 << PIND4;
-const byte lbWriteBufferSize = 32; // Amount of bytes for the write buffer.
+const byte lbWriteBufferSize = 150; // Amount of bytes for the write buffer.
 const byte lbReadBufferSize = 32; // Amount of bytes for the read buffer.
 const boolean lbDebugging = false;
 volatile u32 lbBaudRate = 9600;
@@ -84,6 +85,38 @@ void LBWrite(byte data) {
     TIMSK2 |= (1 << OCIE2A);  // Enable Timer2 Compare Match A Interrupt.
   }
   sei();
+}
+
+void LBPrint(const char *str) {
+  byte size = strlen(str);
+  while (size--) {
+    LBWrite(*str++);
+  }
+}
+
+void LBPrintln(boolean value) {
+  if (value) {
+    LBPrint("True");
+  }
+  else {
+    LBPrint("False");
+  }
+  LBWrite('\r');
+  LBWrite('\n');
+}
+
+void LBPrintln(int value) {
+  char buffer[33];
+  itoa(value, buffer, 10); // convert integer to a string.
+  LBPrint(buffer);
+  LBWrite('\r');
+  LBWrite('\n');
+}
+
+void LBPrintln(const char *str) {
+  LBPrint(str);
+  LBWrite('\r');
+  LBWrite('\n');
 }
 
 boolean LBAvailable(void) {
@@ -267,7 +300,7 @@ ISR(TIMER1_COMPA_vect) {
     }
     else {
       // Reported parity matches calculated parity, approve the read byte.
-  LBToggleDebug2();
+      LBToggleDebug2();
       lbReadBufferRemaining++;
     }
   }

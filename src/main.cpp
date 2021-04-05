@@ -13,18 +13,12 @@ bool menuActive;
 char previousCommand = '\n';
 
 void setup() {
-  Serial.begin(9600);
   LBBegin(9600);
   InitPins();
 }
 void loop() {
-    if (LBAvailable()) {
-      LBWrite(LBRead());
-    }
-    delay(1);
-    return;
-  if (Serial.available() > 0) {
-    switch ((char)Serial.read())
+  if (LBAvailable()) {
+    switch ((char)LBRead())
     {
     case 'T':
       break;
@@ -80,50 +74,52 @@ void InitPins(void) {
   pinMode(PIN_A5, INPUT);
 }
 void PrintDigitalPins(void) {
-  Serial.print("DI08: ");
-  Serial.println(digitalRead(8));
-  Serial.print("DI09: ");
-  Serial.println(digitalRead(9));
-  Serial.print("DI10: ");
-  Serial.println(digitalRead(10));
-  Serial.print("DI11: ");
-  Serial.println(digitalRead(11));
-  Serial.print("DI12: ");
-  Serial.println(digitalRead(12));
-  Serial.print("DI13: ");
-  Serial.println(digitalRead(13));
+  LBPrint("DI08: ");
+  LBPrintln((boolean)digitalRead(8));
+  LBPrint("DI09: ");
+  LBPrintln((boolean)digitalRead(9));
+  LBPrint("DI10: ");
+  LBPrintln((boolean)digitalRead(10));
+  LBPrint("DI11: ");
+  LBPrintln((boolean)digitalRead(11));
+  LBPrint("DI12: ");
+  LBPrintln((boolean)digitalRead(12));
+  LBPrint("DI13: ");
+  LBPrintln((boolean)digitalRead(13));
 }
 void PrintAnalogPins(void) {
-  Serial.print("A0: ");
-  Serial.println(analogRead(PIN_A0));
-  Serial.print("A1: ");
-  Serial.println(analogRead(PIN_A1));
-  Serial.print("A2: ");
-  Serial.println(analogRead(PIN_A2));
-  Serial.print("A3: ");
-  Serial.println(analogRead(PIN_A3));
-  Serial.print("A4: ");
-  Serial.println(analogRead(PIN_A4));
-  Serial.print("A5: ");
-  Serial.println(analogRead(PIN_A5));
+  LBPrint("A0: ");
+  LBPrintln(analogRead(PIN_A0));
+  LBPrint("A1: ");
+  LBPrintln(analogRead(PIN_A1));
+  LBPrint("A2: ");
+  LBPrintln(analogRead(PIN_A2));
+  LBPrint("A3: ");
+  LBPrintln(analogRead(PIN_A3));
+  LBPrint("A4: ");
+  LBPrintln(analogRead(PIN_A4));
+  LBPrint("A5: ");
+  LBPrintln(analogRead(PIN_A5));
 }
 void PrintMenu(void) {
-  Serial.println("View current Input Levels:");
-  Serial.println("- D: Digital Inputs DI08 - DI13");
-  Serial.println("- A: Analog Inputs A0 - A5");
-  Serial.println("- C: Clear Screen");
+  LBPrintln("View current Input Levels:");
+  LBPrintln("- D: Digital Inputs DI08 - DI13");
+  LBPrintln("- A: Analog Inputs A0 - A5");
+  LBPrintln("- C: Clear Screen");
 }
 void ClearScreen(void) {
+  return; // Currently broken with my own version, but out of time to debug.
   Serial.write(27); // ESC command
-  Serial.print("[2J"); // CLS command
+  LBPrint("[2J"); // CLS command
   Serial.write(27); // ESC command
-  Serial.print("[H"); // Reset cursor
+  LBPrint("[H"); // Reset cursor
 }
 void ErasePreviousSixLines() {
+  return; // Currently broken with my own version, but out of time to debug.
   for (int x = 1; x <= 6; x++) {
     Serial.write(27);
-    Serial.print("[6A"); // Move cursor up one line
+    LBPrint("[6A"); // Move cursor up one line
     Serial.write(27);
-    Serial.print("[K"); // Erase to end of line
+    LBPrint("[K"); // Erase to end of line
   }
 }
