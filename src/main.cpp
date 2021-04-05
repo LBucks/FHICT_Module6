@@ -21,7 +21,7 @@ void loop() {
     if (LBAvailable()) {
       LBWrite(LBRead());
     }
-    delay(100);
+    delay(1);
     return;
   if (Serial.available() > 0) {
     switch ((char)Serial.read())

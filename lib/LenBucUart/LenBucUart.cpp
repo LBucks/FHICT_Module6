@@ -8,8 +8,11 @@ void LBDebug(char debugStr[], unsigned long dbgValue);
 void LBPrepareToTalk(void);
 void LBPrepareToListen(void);
 void LBStop(void);
-void LBToggleDebug(void);
+static void LBToggleDebug(void);
+static void LBToggleDebug2(void);
 void LBNextReadBufferPos(void);
+static void LBSetupTimer1(void);
+static void LBSetupTimer2(void);
 
 /*
   Private variables
@@ -20,7 +23,7 @@ const byte lbTxPin = PIND4;
 const byte lbTxPinMsk = 1 << PIND4;
 const byte lbWriteBufferSize = 32; // Amount of bytes for the write buffer.
 const byte lbReadBufferSize = 32; // Amount of bytes for the read buffer.
-const boolean lbDebugging = true;
+const boolean lbDebugging = false;
 volatile u32 lbBaudRate = 9600;
 volatile bool lbReady = false;
 volatile byte lbWriteBuffer[lbWriteBufferSize]; // The write buffer.
@@ -50,6 +53,7 @@ void LBBegin(int baudrate) {
 
   lbBaudRate = baudrate;
 
+  pinMode(6, OUTPUT); // Debug line.
   pinMode(7, OUTPUT); // Debug line.
 
   LBPrepareToTalk();
@@ -75,7 +79,9 @@ void LBWrite(byte data) {
   lbWriteBuffer[availablePosition] = data;
   lbWriteBufferRemaining++;
   if (lbWriteBufferRemaining == 1) {
-    TIMSK2 |= 0b10;  // Enable Timer2 Compare Match A Interrupt.
+    TCNT2 = 0;
+    TIFR2 = (1 << OCF2A); // Clear flag.
+    TIMSK2 |= (1 << OCIE2A);  // Enable Timer2 Compare Match A Interrupt.
   }
   sei();
 }
@@ -106,36 +112,21 @@ void LBDebug(char debugStr[], unsigned long debugValue) {
 
 void LBPrepareToTalk(void) {
   LBDebug("Preparing to talk..", 0);
-  cli(); // Prevent interrupt from interfering during setup.
   pinMode(lbTxPin, OUTPUT);
-  TIMSK2 &= (~0b11); // Disable Timer2 Compare Match A Interrupt.
-  PORTD |= lbTxPinMsk; // Set pin to HIGH for idle.
-  TCCR2A = 0b00000010; // Set to CTC mode so we can use counter matching.
-  TCCR2B = 0; // Reset register
-  TCCR2B |= 0b010; // Prescaler to 8.
-  lbWriteTimerSpeed = (byte)(16000000L / (8 * lbBaudRate)) - 1; // Set counter match target. (16mhz / (prescaler * baudrate))
-  OCR2A = TCNT2 + lbWriteTimerSpeed;
-  sei(); // Enable interrupts.
+  LBSetupTimer2(); // Timer for sending bit by bit.
 }
 
 void LBPrepareToListen(void) {
   LBDebug("Preparing to listen..", 0);
-  // cli(); // Prevent interrupt from interfering during setup.
+  
+  LBSetupTimer1(); // Timer for reading 'in between' bits.
+
   // Setup pin interrupt for start bit.
   pinMode(lbRxPin, INPUT_PULLUP);
-  EICRA &= (~0b1100); // Reset INT1 control register.
-  EICRA |= 0b1000; // Set to interrupt on falling edge to indicate a start bit.
-  EIMSK |= 0b10; // Enable interrupt for starting bit.
-  // Setup timer for after the start bit.
-  TIMSK1 &= (~0b11); // Disable timer 1.
-  TCCR1A = 0; // Reset register.
-  TCCR1B = 0; // Reset register.
-  TCCR1B |= (1 << CS10); // Prescaler to 0.
-  TCCR1B |= (1 << WGM12); // Set to CTC mode so we can use counter matching.
-  lbReadTimerSpeed = (uint16_t)(16000000L / lbBaudRate / 2) - 30; // Set counter match target. (16mhz / (prescaler * baudrate) / 2).
-  // The divide by 2 is so that the timer is twice as fast as required so we can 'Read' between the bits.
-  OCR1A = TCNT1 + lbReadTimerSpeed;
-  sei(); // Enable interrupts.
+  EICRA &= ~(byte)((1 << ISC11) | (1 << ISC10)); // Reset INT1 control register.
+  EICRA |= (1 << ISC11); // Set to interrupt on falling edge to indicate a start bit.
+  EIFR = (1 << INTF1); // Clear flag.
+  EIMSK |= (1 << INT1); // Enable interrupt for starting bit.
 }
 
 void LBStop(void) {
@@ -148,8 +139,19 @@ void LBStop(void) {
   lbReady = false;
 }
 
-// Debug function to toggle output pin 7 whenever I want to see if code is being executed.
+// Debug function to toggle output pin 6 whenever I want to see if code is being executed.
 void LBToggleDebug(void) {
+  const byte pin6Msk = 0b01000000;
+  if ((PORTD & pin6Msk) == pin6Msk) {
+    PORTD &= (~pin6Msk);
+  }
+  else {
+    PORTD |= pin6Msk;
+  }
+}
+
+// Debug function to toggle output pin 7 whenever I want to see if code is being executed.
+void LBToggleDebug2(void) {
   const byte pin7Msk = 0b10000000;
   if ((PORTD & pin7Msk) == pin7Msk) {
     PORTD &= (~pin7Msk);
@@ -170,15 +172,46 @@ void LBNextReadBufferPos() {
   }
 }
 
+static void LBSetupTimer1(void) {
+  // Setup timer for reading after the start bit.
+  cli(); // Prevent interrupt from interfering during setup.
+  TIMSK1 &= (~0b11); // Disable timer 1.
+  TCCR1A = 0; // Reset register.
+  TCCR1B = 0; // Reset register.
+  TCCR1B |= (1 << WGM12); // Set to CTC mode so we can use counter matching.
+  TCCR1B |= (1 << CS10); // Prescaler to 0.
+  lbReadTimerSpeed = (uint16_t)(16000000L / lbBaudRate / 2) - 1; // Set counter match target. (16mhz / (prescaler * baudrate) / 2).
+  // The divide by 2 is so that the timer is twice as fast as required so we can 'Read' between the bits.
+  TCNT1 = 0;
+  OCR1A = lbReadTimerSpeed;
+  TIFR1 = (1 << OCF1A); // Clear flag.
+  sei(); // Enable interrupts.
+}
+
+static void LBSetupTimer2(void) {
+  // Setup timer for sending bit by bit.
+  cli(); // Prevent interrupt from interfering during setup.
+  TIMSK2 &= (~0b11); // Disable Timer2 Compare Match A Interrupt.
+  PORTD |= lbTxPinMsk; // Set pin to HIGH for idle.
+  TCCR2A = 0; // Reset register
+  TCCR2B = 0; // Reset register
+  TCCR2A = (1 << WGM21); // Set to CTC mode so we can use counter matching.
+  TCCR2B = (1 << CS21); // Prescaler to 8.
+  lbWriteTimerSpeed = (byte)(16000000L / (8 * lbBaudRate)) - 1; // Set counter match target. (16mhz / (prescaler * baudrate))
+  TCNT2 = 0;
+  OCR2A = lbWriteTimerSpeed;
+  TIFR2 = (1 << OCF2A); // Clear flag.
+  sei(); // Enable interrupts.
+}
+
 // ISR for detecting start bit
-ISR(INT1_vect, ISR_NOBLOCK) {
+ISR(INT1_vect) {
   if (lbReadPacketCounter == 0) {
     // This is the start bit. Enable the timer so we can poll and save the incoming bits.
     lbReadPacketCounter = 1;
     lbReadPositiveBits = 0;
     cli();
     TCNT1 = 0;
-    OCR1A = lbReadTimerSpeed;
     TIFR1 = (1 << OCF1A); // Clear flag.
     TIMSK1 |= 0b10; // Enable timer 1 interrupt.
     sei();
@@ -204,7 +237,8 @@ ISR(INT1_vect, ISR_NOBLOCK) {
 }
 
 // ISR for receiving bit by bit
-ISR(TIMER1_COMPA_vect, ISR_NOBLOCK) {
+ISR(TIMER1_COMPA_vect) {
+  LBToggleDebug();
   // Counter values and what they represent:
   // 0 == waiting for startbit
   // 1 == between start bit and first data bit
@@ -230,11 +264,10 @@ ISR(TIMER1_COMPA_vect, ISR_NOBLOCK) {
     volatile boolean calculatedParity = ((lbReadPositiveBits % 2) == 0);
     if (measuredParityBit == calculatedParity) {
       // The parity bit is true whilst we already have even parity on the data bits. So a mismatch, discard the read byte.
-      LBToggleDebug(); 
-      LBToggleDebug(); 
     }
     else {
       // Reported parity matches calculated parity, approve the read byte.
+  LBToggleDebug2();
       lbReadBufferRemaining++;
     }
   }
@@ -267,14 +300,14 @@ ISR(TIMER1_COMPA_vect, ISR_NOBLOCK) {
 }
 
 // ISR for sending bit by bit
-ISR(TIMER2_COMPA_vect, ISR_NOBLOCK) {
-  OCR2A = TCNT2 + lbWriteTimerSpeed; // If not set as the first thing once the ISR is called the timing gets messed up.
+ISR(TIMER2_COMPA_vect) {
   // Bit 0 = start bit
   // Bit 1..8 = data bits
   // Bit 9 = parity bit
   // Bit 10..11 stop bits
 
   if (lbWriteBufferRemaining == 0) {
+    TIMSK2 &= ~(1 << OCIE2A);  // Disable Timer2 Compare Match A Interrupt.
     return;
   }
   if (lbWriteNextBit == 0) {
