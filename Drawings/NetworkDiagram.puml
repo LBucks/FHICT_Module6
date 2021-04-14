@@ -1,0 +1,11 @@
+@startuml
+nwdiag {
+  network IIC {
+    DisplayController [address = "0x01"];
+    ButtonController [address = "0x02"];
+    GyroController [address = "0x03"];
+    GyroScope [address = "0x69"];
+    Display [address = "0x3C"];
+  }
+}
+@enduml
